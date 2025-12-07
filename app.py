@@ -10,7 +10,7 @@ import requests
 # ================================================
 # KONFIGURASI
 # ================================================
-MODEL_PATH = r"D:\Tugas Semester 5\PROJEK_IOT\api\best.pt"
+MODEL_PATH = "best.pt"
 SAVE_FOLDER = "static/capture/"
 PHP_SAVE_URL = "http://kel3.myiot.fun/public_html/save_prediction.php"
 
