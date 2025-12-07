@@ -54,7 +54,8 @@ last_output = {
 def read_img_bytes(b):
     try:
         return Image.open(io.BytesIO(b)).convert("RGB")
-    except:
+    except Exception as e:
+        print("read_img_bytes error:", e)
         return None
 
 # ================================================
@@ -64,10 +65,8 @@ def read_img_bytes(b):
 def motor_control():
     data = request.get_json()
     state = data.get("status", "")
-
     if state not in ["on", "off"]:
         return jsonify({"message": "invalid command"}), 400
-
     try:
         esp_url = f"{ESP32_DEV_URL}?state={state}"
         requests.get(esp_url, timeout=2)
@@ -76,13 +75,34 @@ def motor_control():
         return jsonify({"message": "ESP32 unreachable", "error": str(e)}), 500
 
 # ================================================
-# ROUTE PREDICT
+# ROUTE PREDICT (MENERIMA RAW JPEG)
 # ================================================
 @app.route("/predict", methods=["POST"])
 def predict():
     global last_output
 
-    raw = request.files['file'].read() if 'file' in request.files else request.get_data()
+    # Debug: print content-type & length
+    content_type = request.headers.get('Content-Type', '')
+    try:
+        content_length = int(request.headers.get('Content-Length', '0'))
+    except:
+        content_length = 0
+    print(f"[PREDICT] Content-Type: {content_type}  Content-Length: {content_length}")
+
+    raw = None
+    # Jika klien mengirim multipart/form-data dengan field 'file'
+    if 'file' in request.files:
+        try:
+            raw = request.files['file'].read()
+            print(f"[PREDICT] Received multipart file, bytes: {len(raw)}")
+        except Exception as e:
+            print("Error reading request.files['file']:", e)
+            raw = None
+    else:
+        # Coba baca raw body (untuk image/jpeg dari ESP32)
+        raw = request.get_data()
+        if raw:
+            print(f"[PREDICT] Received raw body, bytes: {len(raw)}")
 
     if not raw:
         return jsonify({"error": "no_image"}), 400
@@ -99,9 +119,21 @@ def predict():
     np_img = np.array(img)[:, :, ::-1]
     result = model(np_img, imgsz=224, conf=CONF_THRESHOLD)[0]
 
-    cls_id = int(result.probs.top1)
-    conf = float(result.probs.top1conf)
-    label = CLASS_NAMES[cls_id]
+    # Pastikan ada probs
+    try:
+        cls_id = int(result.probs.top1)
+        conf = float(result.probs.top1conf)
+    except Exception as e:
+        print("Model probs error:", e)
+        # fallback jika tidak ada probs
+        if len(result.boxes) > 0:
+            cls_id = int(result.boxes.cls[0].item())
+            conf = float(result.boxes.conf[0].item())
+        else:
+            cls_id = 0
+            conf = 0.0
+
+    label = CLASS_NAMES[cls_id] if cls_id < len(CLASS_NAMES) else str(cls_id)
 
     output = {
         "label": label,
@@ -112,6 +144,7 @@ def predict():
 
     last_output = output
 
+    # Simpan ke PHP (optional), jangan crash app kalau gagal
     try:
         with open(filepath, "rb") as f:
             requests.post(
