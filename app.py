@@ -15,7 +15,7 @@ SAVE_FOLDER = "static/capture/"
 PHP_SAVE_URL = "http://kel3.myiot.fun/public_html/save_prediction.php"
 
 # === IP ESP32 DEV UNTUK KENDALI MOTOR ============
-ESP32_DEV_URL = "http://10.98.0.32/motor"   # EDIT sesuai IP
+ESP32_DEV_URL = "http://10.98.0.32/motor"
 
 CLASS_NAMES = ["busuk", "matang", "tidak_matang"]
 CONF_THRESHOLD = 0.25
@@ -25,6 +25,11 @@ CONF_THRESHOLD = 0.25
 # ================================================
 app = Flask(__name__)
 CORS(app)
+
+# Route untuk Render health check
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({"message": "YOLO Flask API Running"})
 
 # ================================================
 # LOAD YOLO
@@ -53,7 +58,7 @@ def read_img_bytes(b):
         return None
 
 # ================================================
-# ROUTE KENDALI MOTOR (L298N → ESP32 DEV)
+# ROUTE KENDALI MOTOR
 # ================================================
 @app.route("/motor", methods=["POST"])
 def motor_control():
@@ -64,14 +69,11 @@ def motor_control():
         return jsonify({"message": "invalid command"}), 400
 
     try:
-        # Kirim ke ESP32 Dev
         esp_url = f"{ESP32_DEV_URL}?state={state}"
         requests.get(esp_url, timeout=2)
-
         return jsonify({"message": f"motor {state}"}), 200
     except Exception as e:
         return jsonify({"message": "ESP32 unreachable", "error": str(e)}), 500
-
 
 # ================================================
 # ROUTE PREDICT
@@ -89,13 +91,11 @@ def predict():
     if img is None:
         return jsonify({"error": "decode_failed"}), 400
 
-    # SIMPAN GAMBAR
     os.makedirs(SAVE_FOLDER, exist_ok=True)
     filename = f"capture_{int(time.time())}.jpg"
     filepath = os.path.join(SAVE_FOLDER, filename)
     img.save(filepath)
 
-    # YOLO PREDICT
     np_img = np.array(img)[:, :, ::-1]
     result = model(np_img, imgsz=224, conf=CONF_THRESHOLD)[0]
 
@@ -103,7 +103,6 @@ def predict():
     conf = float(result.probs.top1conf)
     label = CLASS_NAMES[cls_id]
 
-    # OUTPUT JSON
     output = {
         "label": label,
         "confidence": conf,
@@ -113,9 +112,6 @@ def predict():
 
     last_output = output
 
-    # ================================================
-    # KIRIM DATA + FILE GAMBAR KE PHP (FORM-DATA)
-    # ================================================
     try:
         with open(filepath, "rb") as f:
             requests.post(
@@ -141,4 +137,5 @@ def last():
 # ================================================
 if __name__ == "__main__":
     os.makedirs(SAVE_FOLDER, exist_ok=True)
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    port = int(os.environ.get("PORT", 5000))   # FIX penting untuk Render
+    app.run(host="0.0.0.0", port=port, debug=False)
